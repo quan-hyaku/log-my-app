@@ -1,5 +1,5 @@
 {
-  "name": "log-my-app",
+  "name": "@quan-hyaku/log-my-app",
   "version": "0.1.0",
   "description": "Browser logging library that intercepts console methods and persists logs to IndexedDB with localStorage fallback",
   "type": "module",
@@ -35,6 +35,14 @@
     "debug"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/quan-hyaku/log-my-app"
+  },
+  "homepage": "https://github.com/quan-hyaku/log-my-app#readme",
+  "bugs": {
+    "url": "https://github.com/quan-hyaku/log-my-app/issues"
+  },
   "engines": {
     "node": ">=18.0.0"
   },

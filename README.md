@@ -1,4 +1,4 @@
-# log-my-app
+# @quan-hyaku/log-my-app
 
 Browser logging library that intercepts `console.log`, `console.warn`, `console.error`, `console.info`, and `console.debug`, persisting all output to IndexedDB (with automatic localStorage fallback). Retrieve, filter, or download your logs at any time.
 
@@ -9,7 +9,7 @@ Zero external dependencies.
 ## Installation
 
 ```bash
-npm install log-my-app
+npm install @quan-hyaku/log-my-app
 ```
 
 ## Usage
@@ -17,7 +17,7 @@ npm install log-my-app
 ### Console interception
 
 ```ts
-import { initLogger, getLogs, getLogsByLevel, clearLogs, downloadLogs, destroyLogger } from 'log-my-app';
+import { initLogger, getLogs, getLogsByLevel, clearLogs, downloadLogs, destroyLogger } from '@quan-hyaku/log-my-app';
 
 // Start intercepting console methods
 await initLogger();
@@ -46,7 +46,7 @@ destroyLogger();
 ### Custom Logger with tags
 
 ```ts
-import { initLogger, Logger, getLogsByTag, destroyLogger } from 'log-my-app';
+import { initLogger, Logger, getLogsByTag, destroyLogger } from '@quan-hyaku/log-my-app';
 
 await initLogger();
 
