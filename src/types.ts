@@ -11,6 +11,7 @@ export interface LogEntry {
 export interface LoggerConfig {
   maxLogCount?: number;
   storageKey?: string;
+  captureUncaughtErrors?: boolean;
 }
 
 export interface StorageAdapter {

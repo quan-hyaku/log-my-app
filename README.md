@@ -68,14 +68,38 @@ destroyLogger();
 
 The `Logger` writes directly to storage without producing console output. Console interception and the `Logger` API work independently -- use both together or either one alone.
 
+### Uncaught error capture
+
+```ts
+import { initLogger, getLogsByTag, destroyLogger } from '@quan-hyaku/log-my-app';
+
+await initLogger({ captureUncaughtErrors: true });
+
+// Uncaught errors and unhandled promise rejections are now
+// automatically captured and stored as log entries.
+//
+// - Uncaught errors are tagged 'uncaught'
+// - Unhandled rejections are tagged 'unhandled-rejection'
+// - Both are stored at the 'error' level
+
+// Retrieve captured errors by tag
+const uncaught = await getLogsByTag('uncaught');
+const rejections = await getLogsByTag('unhandled-rejection');
+
+destroyLogger();
+```
+
+Each captured entry includes the serialized Error (name, message, stack) along with source location metadata (filename, line number, column number) when available.
+
 ## Configuration
 
 Pass options to `initLogger()`:
 
 ```ts
 await initLogger({
-  maxLogCount: 10000,       // Maximum log entries to keep (default: 5000)
-  storageKey: 'my-app-logs' // Storage key name (default: 'log-my-app')
+  maxLogCount: 10000,            // Maximum log entries to keep (default: 5000)
+  storageKey: 'my-app-logs',     // Storage key name (default: 'log-my-app')
+  captureUncaughtErrors: true    // Capture uncaught errors and unhandled rejections (default: false)
 });
 ```
 
@@ -154,8 +178,9 @@ interface LogEntry {
 }
 
 interface LoggerConfig {
-  maxLogCount?: number;   // default: 5000
-  storageKey?: string;    // default: 'log-my-app'
+  maxLogCount?: number;          // default: 5000
+  storageKey?: string;           // default: 'log-my-app'
+  captureUncaughtErrors?: boolean; // default: false
 }
 ```
 

@@ -3,6 +3,7 @@ import { DEFAULT_MAX_LOG_COUNT, DEFAULT_STORAGE_KEY } from './types.js';
 import { createStorage } from './storage.js';
 import { ConsoleInterceptor } from './interceptor.js';
 import { bindLogger, unbindLogger } from './custom-logger.js';
+import { installErrorHandlers, uninstallErrorHandlers } from './error-handler.js';
 
 let storage: StorageAdapter | null = null;
 let interceptor: ConsoleInterceptor | null = null;
@@ -19,9 +20,14 @@ export async function initLogger(config?: LoggerConfig): Promise<void> {
   interceptor = new ConsoleInterceptor(storage, maxLogCount);
   interceptor.install();
   bindLogger(storage);
+
+  if (config?.captureUncaughtErrors === true) {
+    installErrorHandlers(storage);
+  }
 }
 
 export function destroyLogger(): void {
+  uninstallErrorHandlers();
   unbindLogger();
   if (interceptor) {
     interceptor.uninstall();
