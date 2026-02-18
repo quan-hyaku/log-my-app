@@ -1,21 +1,14 @@
 import type { LogEntry, StorageAdapter } from './types.js';
-
-function safeStringify(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (value instanceof Error) {
-    return JSON.stringify({ name: value.name, message: value.message, stack: value.stack });
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
+import { safeStringify } from './utils.js';
 
 let errorHandler: ((event: Event) => void) | null = null;
 let rejectionHandler: ((event: PromiseRejectionEvent) => void) | null = null;
 
-export function installErrorHandlers(storage: StorageAdapter): void {
+export function installErrorHandlers(
+  storage: StorageAdapter,
+  maxDepth: number = 2,
+  captureStackTraces: boolean = true,
+): void {
   if (errorHandler) return;
 
   errorHandler = (event: Event) => {
@@ -27,9 +20,16 @@ export function installErrorHandlers(storage: StorageAdapter): void {
     if (event.error instanceof Error) {
       details.name = event.error.name;
       details.message = event.error.message;
-      details.stack = event.error.stack;
+      if (captureStackTraces) {
+        details.stack = event.error.stack;
+      }
     } else {
-      details.value = safeStringify(event.error);
+      details.value = safeStringify(
+        event.error,
+        maxDepth,
+        undefined,
+        captureStackTraces,
+      );
     }
     if (event.filename) details.filename = event.filename;
     if (event.lineno !== undefined) details.lineno = event.lineno;
@@ -39,7 +39,7 @@ export function installErrorHandlers(storage: StorageAdapter): void {
       timestamp: new Date().toISOString(),
       level: 'error',
       message: event.error instanceof Error ? event.error.message : String(event.message),
-      args: [JSON.stringify(details)],
+      args: [safeStringify(details, maxDepth, undefined, captureStackTraces)],
       tag: 'uncaught',
     };
 
@@ -55,9 +55,16 @@ export function installErrorHandlers(storage: StorageAdapter): void {
 
     if (reason instanceof Error) {
       message = reason.message;
-      details = JSON.stringify({ name: reason.name, message: reason.message, stack: reason.stack });
+      const obj: Record<string, unknown> = {
+        name: reason.name,
+        message: reason.message,
+      };
+      if (captureStackTraces) {
+        obj.stack = reason.stack;
+      }
+      details = safeStringify(obj, maxDepth, undefined, captureStackTraces);
     } else {
-      message = safeStringify(reason);
+      message = safeStringify(reason, maxDepth, undefined, captureStackTraces);
       details = message;
     }
 

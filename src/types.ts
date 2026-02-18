@@ -12,6 +12,8 @@ export interface LoggerConfig {
   maxLogCount?: number;
   storageKey?: string;
   captureUncaughtErrors?: boolean;
+  maxDepth?: number;
+  captureStackTraces?: boolean;
 }
 
 export interface StorageAdapter {
@@ -23,6 +25,7 @@ export interface StorageAdapter {
   clear(): Promise<void>;
   count(): Promise<number>;
   trim(maxCount: number): Promise<void>;
+  flush(): Promise<void>;
   close(): void;
 }
 

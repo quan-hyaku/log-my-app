@@ -95,7 +95,11 @@ describe('IndexedDBStorage', () => {
   it('should reject operations when database is not initialized', async () => {
     const uninit = new IndexedDBStorage('uninit-db');
     // Do not call init()
-    await expect(uninit.addEntry(makeEntry())).rejects.toThrow('Database not initialized');
+    // addEntry now buffers entries and flushes via queueMicrotask,
+    // so it resolves immediately. The flush will fail silently.
+    await expect(uninit.addEntry(makeEntry())).resolves.toBeUndefined();
+    // flush() attempts to write the buffer and rejects when db is null
+    await expect(uninit.flush()).rejects.toThrow('Database not initialized');
     await expect(uninit.getAll()).rejects.toThrow('Database not initialized');
     await expect(uninit.getByLevel('log')).rejects.toThrow('Database not initialized');
     await expect(uninit.clear()).rejects.toThrow('Database not initialized');
@@ -277,6 +281,155 @@ describe('LocalStorageAdapter', () => {
     await storage.addEntry(makeEntry({ message: 'untagged2' }));
     const results = await storage.getByTag('anything');
     expect(results).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LocalStorageAdapter - in-memory cache behavior
+// ---------------------------------------------------------------------------
+describe('LocalStorageAdapter - in-memory cache', () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it('should make entries readable immediately from memory (before flush)', async () => {
+    const s = new LocalStorageAdapter('cache-test-' + Math.random().toString(36).slice(2), 1000);
+    await s.init();
+
+    await s.addEntry(makeEntry({ message: 'immediate' }));
+
+    // Entry should be readable from getAll() immediately (from memory)
+    // even though the debounced flush has not fired yet
+    const all = await s.getAll();
+    expect(all).toHaveLength(1);
+    expect(all[0]!.message).toBe('immediate');
+
+    s.close();
+  });
+
+  it('should flush writes to localStorage', async () => {
+    const key = 'flush-test-' + Math.random().toString(36).slice(2);
+    const s = new LocalStorageAdapter(key, 1000);
+    await s.init();
+
+    await s.addEntry(makeEntry({ message: 'flushed' }));
+
+    // Before explicit flush, localStorage may not be updated yet
+    // (debounced). After flush(), it must be written.
+    await s.flush();
+
+    const raw = localStorage.getItem(`__${key}__`);
+    expect(raw).not.toBeNull();
+    const parsed = JSON.parse(raw!) as LogEntry[];
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]!.message).toBe('flushed');
+
+    s.close();
+  });
+
+  it('should flush remaining entries on close()', async () => {
+    const key = 'close-flush-' + Math.random().toString(36).slice(2);
+    const s = new LocalStorageAdapter(key, 1000);
+    await s.init();
+
+    await s.addEntry(makeEntry({ message: 'before-close' }));
+
+    // close() should flush synchronously
+    s.close();
+
+    const raw = localStorage.getItem(`__${key}__`);
+    expect(raw).not.toBeNull();
+    const parsed = JSON.parse(raw!) as LogEntry[];
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]!.message).toBe('before-close');
+  });
+
+  it('should read existing entries from localStorage into memory on init', async () => {
+    const key = 'init-read-' + Math.random().toString(36).slice(2);
+
+    // Pre-populate localStorage with entries
+    const existingEntries = [
+      makeEntry({ message: 'existing-1' }),
+      makeEntry({ message: 'existing-2' }),
+    ];
+    localStorage.setItem(`__${key}__`, JSON.stringify(existingEntries));
+
+    // Init should read them into memory
+    const s = new LocalStorageAdapter(key, 1000);
+    await s.init();
+
+    const all = await s.getAll();
+    expect(all).toHaveLength(2);
+    expect(all[0]!.message).toBe('existing-1');
+    expect(all[1]!.message).toBe('existing-2');
+
+    s.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IndexedDBStorage - write batching
+// ---------------------------------------------------------------------------
+describe('IndexedDBStorage - write batching', () => {
+  let storage: IndexedDBStorage;
+
+  beforeEach(async () => {
+    storage = new IndexedDBStorage('batch-test-' + Math.random().toString(36).slice(2));
+    await storage.init();
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('should batch multiple rapid addEntry calls', async () => {
+    // Fire several addEntry calls synchronously (no await between them)
+    // They should all be buffered and flushed in a single batch
+    for (let i = 0; i < 10; i++) {
+      storage.addEntry(makeEntry({ message: `batch-${i}` }));
+    }
+
+    // Flush to ensure all entries are written
+    await storage.flush();
+
+    const all = await storage.getAll();
+    expect(all).toHaveLength(10);
+    expect(all[0]!.message).toBe('batch-0');
+    expect(all[9]!.message).toBe('batch-9');
+  });
+
+  it('should make entries fully retrievable after batch flush', async () => {
+    for (let i = 0; i < 20; i++) {
+      storage.addEntry(makeEntry({ message: `entry-${i}`, level: i % 2 === 0 ? 'info' : 'warn' }));
+    }
+
+    await storage.flush();
+
+    const all = await storage.getAll();
+    expect(all).toHaveLength(20);
+
+    const infos = await storage.getByLevel('info');
+    expect(infos).toHaveLength(10);
+
+    const warns = await storage.getByLevel('warn');
+    expect(warns).toHaveLength(10);
+  });
+
+  it('should handle range-based trim correctly', async () => {
+    // Add 10 entries
+    for (let i = 0; i < 10; i++) {
+      await storage.addEntry(makeEntry({ message: `trim-${i}` }));
+    }
+    await storage.flush();
+    expect(await storage.count()).toBe(10);
+
+    // Trim to keep only 5
+    await storage.trim(5);
+    const remaining = await storage.getAll();
+    expect(remaining).toHaveLength(5);
+    // Oldest entries (0-4) should be removed
+    expect(remaining[0]!.message).toBe('trim-5');
+    expect(remaining[4]!.message).toBe('trim-9');
   });
 });
 

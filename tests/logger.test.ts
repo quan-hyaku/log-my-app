@@ -301,7 +301,7 @@ describe('Logger edge cases', () => {
     expect(entry.args).toContain('null');
   });
 
-  it('should handle very large payloads', async () => {
+  it('should handle very large payloads (truncated by safeStringify)', async () => {
     await initLogger({ storageKey: 'edge-large-' + Math.random().toString(36).slice(2) });
 
     const bigString = 'A'.repeat(50_000);
@@ -313,9 +313,12 @@ describe('Logger edge cases', () => {
     });
 
     const logs = await getLogs();
-    const entry = logs.find((l) => l.message === bigString)!;
+    // safeStringify truncates at default maxLength (10,240), so the
+    // message will be truncated with "..." appended
+    const entry = logs[logs.length - 1]!;
     expect(entry).toBeDefined();
-    expect(entry.message.length).toBe(50_000);
+    expect(entry.message.length).toBeLessThanOrEqual(10_243);
+    expect(entry.message.startsWith('A')).toBe(true);
   });
 
   it('should handle rapid consecutive logs without losing data', async () => {

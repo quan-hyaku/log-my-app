@@ -3,10 +3,14 @@ import { LOCALSTORAGE_MAX_LOG_COUNT } from './types.js';
 
 const STORE_NAME = 'logs';
 const DB_VERSION = 2;
+const INDEXEDDB_BACKPRESSURE_LIMIT = 1000;
+const LOCALSTORAGE_FLUSH_DELAY = 200;
 
 export class IndexedDBStorage implements StorageAdapter {
   private db: IDBDatabase | null = null;
   private readonly dbName: string;
+  private pendingEntries: LogEntry[] = [];
+  private flushScheduled = false;
 
   constructor(storageKey: string) {
     this.dbName = storageKey;
@@ -47,18 +51,50 @@ export class IndexedDBStorage implements StorageAdapter {
     });
   }
 
-  addEntry(entry: LogEntry): Promise<void> {
+  async addEntry(entry: LogEntry): Promise<void> {
+    this.pendingEntries.push(entry);
+
+    // Backpressure: if buffer exceeds limit, drop debug-level entries
+    if (this.pendingEntries.length > INDEXEDDB_BACKPRESSURE_LIMIT) {
+      this.pendingEntries = this.pendingEntries.filter(
+        (e) => e.level !== 'debug',
+      );
+    }
+
+    if (!this.flushScheduled) {
+      this.flushScheduled = true;
+      queueMicrotask(() => {
+        this.flushEntries().catch(() => {
+          // Flush failures are non-critical
+        });
+      });
+    }
+  }
+
+  private flushEntries(): Promise<void> {
+    this.flushScheduled = false;
+
+    if (this.pendingEntries.length === 0) return Promise.resolve();
+    if (!this.db) return Promise.reject(new Error('Database not initialized'));
+
+    const batch = this.pendingEntries;
+    this.pendingEntries = [];
+
     return new Promise((resolve, reject) => {
-      if (!this.db) {
-        reject(new Error('Database not initialized'));
-        return;
-      }
-      const tx = this.db.transaction(STORE_NAME, 'readwrite');
+      const tx = this.db!.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
-      store.add(entry);
+
+      for (const entry of batch) {
+        store.add(entry);
+      }
+
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
+  }
+
+  async flush(): Promise<void> {
+    await this.flushEntries();
   }
 
   getAll(): Promise<LogEntry[]> {
@@ -151,15 +187,22 @@ export class IndexedDBStorage implements StorageAdapter {
           return;
         }
 
+        // Range-based trim: find the key of the (deleteCount)th entry,
+        // then delete everything up to and including that key.
         const deleteCount = total - maxCount;
-        const cursorReq = store.openCursor();
-        let deleted = 0;
+        const cursorReq = store.openKeyCursor();
+        let seen = 0;
 
         cursorReq.onsuccess = () => {
           const cursor = cursorReq.result;
-          if (cursor && deleted < deleteCount) {
-            cursor.delete();
-            deleted++;
+          if (!cursor) return;
+
+          seen++;
+          if (seen === deleteCount) {
+            // Delete all entries with key <= cursor.key
+            const range = IDBKeyRange.upperBound(cursor.key);
+            store.delete(range);
+          } else {
             cursor.continue();
           }
         };
@@ -171,6 +214,10 @@ export class IndexedDBStorage implements StorageAdapter {
   }
 
   close(): void {
+    // Synchronously abandon any pending writes (no async operations in close)
+    this.pendingEntries = [];
+    this.flushScheduled = false;
+
     if (this.db) {
       this.db.close();
       this.db = null;
@@ -181,6 +228,8 @@ export class IndexedDBStorage implements StorageAdapter {
 export class LocalStorageAdapter implements StorageAdapter {
   private readonly key: string;
   private readonly maxEntries: number;
+  private entries: LogEntry[] = [];
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(storageKey: string, maxLogCount: number) {
     this.key = `__${storageKey}__`;
@@ -188,68 +237,87 @@ export class LocalStorageAdapter implements StorageAdapter {
   }
 
   async init(): Promise<void> {
-    // Ensure the key exists
-    if (localStorage.getItem(this.key) === null) {
+    // Read from localStorage once into memory
+    const raw = localStorage.getItem(this.key);
+    if (raw) {
+      try {
+        this.entries = JSON.parse(raw) as LogEntry[];
+      } catch {
+        this.entries = [];
+      }
+    } else {
+      this.entries = [];
       localStorage.setItem(this.key, '[]');
     }
   }
 
   async addEntry(entry: LogEntry): Promise<void> {
-    const entries = this.readEntries();
-    entries.push(entry);
-    this.writeEntries(entries);
+    this.entries.push(entry);
+    this.scheduleDebouncedFlush();
   }
 
   async getAll(): Promise<LogEntry[]> {
-    return this.readEntries();
+    return this.entries.slice();
   }
 
   async getByLevel(level: LogLevel): Promise<LogEntry[]> {
-    return this.readEntries().filter((e) => e.level === level);
+    return this.entries.filter((e) => e.level === level);
   }
 
   async getByTag(tag: string): Promise<LogEntry[]> {
-    return this.readEntries().filter((e) => e.tag === tag);
+    return this.entries.filter((e) => e.tag === tag);
   }
 
   async clear(): Promise<void> {
+    this.entries = [];
     localStorage.setItem(this.key, '[]');
   }
 
   async count(): Promise<number> {
-    return this.readEntries().length;
+    return this.entries.length;
   }
 
   async trim(maxCount: number): Promise<void> {
     const cap = Math.min(maxCount, this.maxEntries);
-    const entries = this.readEntries();
-    if (entries.length > cap) {
-      this.writeEntries(entries.slice(entries.length - cap));
+    if (this.entries.length > cap) {
+      this.entries = this.entries.slice(this.entries.length - cap);
+      this.scheduleDebouncedFlush();
     }
+  }
+
+  async flush(): Promise<void> {
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    this.writeEntries();
   }
 
   close(): void {
-    // Nothing to close for localStorage
-  }
-
-  private readEntries(): LogEntry[] {
-    try {
-      const raw = localStorage.getItem(this.key);
-      if (!raw) return [];
-      return JSON.parse(raw) as LogEntry[];
-    } catch {
-      return [];
+    // Flush synchronously before closing
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
     }
+    this.writeEntries();
   }
 
-  private writeEntries(entries: LogEntry[]): void {
+  private scheduleDebouncedFlush(): void {
+    if (this.flushTimer !== null) return;
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      this.writeEntries();
+    }, LOCALSTORAGE_FLUSH_DELAY);
+  }
+
+  private writeEntries(): void {
     try {
-      localStorage.setItem(this.key, JSON.stringify(entries));
+      localStorage.setItem(this.key, JSON.stringify(this.entries));
     } catch {
-      // QuotaExceededError — drop oldest half and retry
-      const trimmed = entries.slice(Math.floor(entries.length / 2));
+      // QuotaExceededError -- drop oldest half and retry
+      this.entries = this.entries.slice(Math.floor(this.entries.length / 2));
       try {
-        localStorage.setItem(this.key, JSON.stringify(trimmed));
+        localStorage.setItem(this.key, JSON.stringify(this.entries));
       } catch {
         // Storage completely full, nothing we can do
       }

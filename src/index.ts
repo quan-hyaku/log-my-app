@@ -1,4 +1,4 @@
-export type { LogEntry, LogLevel, LoggerConfig } from './types.js';
+export type { LogEntry, LogLevel, LoggerConfig, StorageAdapter } from './types.js';
 export type { TaggedLogger } from './custom-logger.js';
 export { LOG_LEVELS } from './types.js';
 export {
@@ -11,3 +11,4 @@ export {
   downloadLogs,
 } from './logger.js';
 export { Logger } from './custom-logger.js';
+export { safeStringify } from './utils.js';

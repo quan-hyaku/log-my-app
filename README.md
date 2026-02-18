@@ -99,7 +99,9 @@ Pass options to `initLogger()`:
 await initLogger({
   maxLogCount: 10000,            // Maximum log entries to keep (default: 5000)
   storageKey: 'my-app-logs',     // Storage key name (default: 'log-my-app')
-  captureUncaughtErrors: true    // Capture uncaught errors and unhandled rejections (default: false)
+  captureUncaughtErrors: true,   // Capture uncaught errors and unhandled rejections (default: false)
+  maxDepth: 3,                   // Max object nesting depth for serialization (default: 2)
+  captureStackTraces: false      // Include stack traces in error serialization (default: true)
 });
 ```
 
@@ -108,7 +110,9 @@ await initLogger({
 - **IndexedDB** is used by default when available
 - **localStorage** is used automatically as a fallback (e.g., Firefox Private Browsing, restricted environments)
 - localStorage mode caps entries at 1000 regardless of `maxLogCount` to stay within browser storage limits
-- Log rotation happens periodically — oldest entries are trimmed when the cap is exceeded
+- Log rotation happens periodically -- oldest entries are trimmed when the cap is exceeded
+
+> **Same-origin storage access:** Both IndexedDB and localStorage are scoped to the page origin. Any script running on the same origin can read the stored logs. Avoid logging sensitive data (tokens, passwords, PII) if your page loads third-party scripts.
 
 ## API Reference
 
@@ -181,6 +185,8 @@ interface LoggerConfig {
   maxLogCount?: number;          // default: 5000
   storageKey?: string;           // default: 'log-my-app'
   captureUncaughtErrors?: boolean; // default: false
+  maxDepth?: number;             // default: 2
+  captureStackTraces?: boolean;  // default: true
 }
 ```
 

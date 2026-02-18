@@ -15,14 +15,16 @@ export async function initLogger(config?: LoggerConfig): Promise<void> {
 
   const maxLogCount = config?.maxLogCount ?? DEFAULT_MAX_LOG_COUNT;
   const storageKey = config?.storageKey ?? DEFAULT_STORAGE_KEY;
+  const maxDepth = config?.maxDepth ?? 2;
+  const captureStackTraces = config?.captureStackTraces ?? true;
 
   storage = await createStorage(storageKey, maxLogCount);
-  interceptor = new ConsoleInterceptor(storage, maxLogCount);
+  interceptor = new ConsoleInterceptor(storage, maxLogCount, maxDepth, captureStackTraces);
   interceptor.install();
-  bindLogger(storage);
+  bindLogger(storage, maxLogCount, maxDepth, captureStackTraces);
 
   if (config?.captureUncaughtErrors === true) {
-    installErrorHandlers(storage);
+    installErrorHandlers(storage, maxDepth, captureStackTraces);
   }
 }
 

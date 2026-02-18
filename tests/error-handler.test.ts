@@ -495,3 +495,109 @@ describe('Error handler - works alongside console interception', () => {
     expect(errors.some((e) => e.message === 'uncaught err')).toBe(true);
   });
 });
+
+describe('Error handler - no double-stringify', () => {
+  beforeEach(async () => {
+    await initLogger({
+      storageKey: 'no-double-stringify-' + Math.random().toString(36).slice(2),
+      captureUncaughtErrors: true,
+    });
+  });
+
+  afterEach(() => {
+    destroyLogger();
+  });
+
+  it('should not double-stringify error handler entries', async () => {
+    const err = new TypeError('double check');
+    dispatchError(err);
+
+    await vi.waitFor(async () => {
+      const logs = await getLogsByTag('uncaught');
+      expect(logs).toHaveLength(1);
+    });
+
+    const logs = await getLogsByTag('uncaught');
+    const entry = logs[0]!;
+
+    // The args[0] should be a valid JSON string containing the error details
+    const details = JSON.parse(entry.args[0]!);
+    expect(details.name).toBe('TypeError');
+    expect(details.message).toBe('double check');
+
+    // It should NOT be a JSON-encoded string of a JSON string (double-stringify).
+    // If double-stringified, parsing twice would still yield a string, not an object.
+    expect(typeof details).toBe('object');
+  });
+
+  it('should not double-stringify unhandled rejection entries', async () => {
+    const err = new RangeError('rejection check');
+    dispatchRejection(err);
+
+    await vi.waitFor(async () => {
+      const logs = await getLogsByTag('unhandled-rejection');
+      expect(logs).toHaveLength(1);
+    });
+
+    const logs = await getLogsByTag('unhandled-rejection');
+    const entry = logs[0]!;
+
+    // The args[0] should be a valid JSON string containing the error details
+    const details = JSON.parse(entry.args[0]!);
+    expect(details.name).toBe('RangeError');
+    expect(details.message).toBe('rejection check');
+    expect(typeof details).toBe('object');
+  });
+});
+
+describe('Error handler - captureStackTraces config', () => {
+  afterEach(() => {
+    destroyLogger();
+  });
+
+  it('should omit stacks from error entries when captureStackTraces is false', async () => {
+    await initLogger({
+      storageKey: 'no-stacks-' + Math.random().toString(36).slice(2),
+      captureUncaughtErrors: true,
+      captureStackTraces: false,
+    });
+
+    dispatchError(new TypeError('no-stack error'));
+
+    await vi.waitFor(async () => {
+      const logs = await getLogsByTag('uncaught');
+      expect(logs).toHaveLength(1);
+    });
+
+    const logs = await getLogsByTag('uncaught');
+    const entry = logs[0]!;
+    const details = JSON.parse(entry.args[0]!);
+    expect(details.name).toBe('TypeError');
+    expect(details.message).toBe('no-stack error');
+    // Stack should be omitted
+    expect(details.stack).toBeUndefined();
+  });
+
+  it('should include stacks in error entries by default (captureStackTraces=true)', async () => {
+    await initLogger({
+      storageKey: 'with-stacks-' + Math.random().toString(36).slice(2),
+      captureUncaughtErrors: true,
+      captureStackTraces: true,
+    });
+
+    dispatchError(new Error('with-stack error'));
+
+    await vi.waitFor(async () => {
+      const logs = await getLogsByTag('uncaught');
+      expect(logs).toHaveLength(1);
+    });
+
+    const logs = await getLogsByTag('uncaught');
+    const entry = logs[0]!;
+    const details = JSON.parse(entry.args[0]!);
+    expect(details.name).toBe('Error');
+    expect(details.message).toBe('with-stack error');
+    // Stack should be present
+    expect(typeof details.stack).toBe('string');
+  });
+});
