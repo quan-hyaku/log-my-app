@@ -1,4 +1,6 @@
 import type { LogEntry, LogLevel, StorageAdapter } from './types.js';
+import { TRIM_CHECK_INTERVAL } from './types.js';
+import { safeStringify } from './utils.js';
 
 export interface TaggedLogger {
   log(message: string, ...args: unknown[]): void;
@@ -8,29 +10,25 @@ export interface TaggedLogger {
   debug(message: string, ...args: unknown[]): void;
 }
 
-function safeStringify(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (value instanceof Error) {
-    return JSON.stringify({ name: value.name, message: value.message, stack: value.stack });
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
+interface StringifyConfig {
+  maxDepth: number;
+  captureStackTraces: boolean;
 }
 
 function buildLogEntry(
   level: LogLevel,
   message: string,
   args: unknown[],
+  config: StringifyConfig,
   tag?: string,
 ): LogEntry {
   const entry: LogEntry = {
     timestamp: new Date().toISOString(),
     level,
     message,
-    args: args.map(safeStringify),
+    args: args.map((a) =>
+      safeStringify(a, config.maxDepth, undefined, config.captureStackTraces),
+    ),
   };
   if (tag !== undefined) {
     entry.tag = tag;
@@ -39,13 +37,27 @@ function buildLogEntry(
 }
 
 let storageRef: StorageAdapter | null = null;
+let configRef: StringifyConfig = { maxDepth: 2, captureStackTraces: true };
+let maxLogCountRef = 0;
+let writeCount = 0;
 
-export function bindLogger(storage: StorageAdapter): void {
+export function bindLogger(
+  storage: StorageAdapter,
+  maxLogCount: number,
+  maxDepth: number = 2,
+  captureStackTraces: boolean = true,
+): void {
   storageRef = storage;
+  maxLogCountRef = maxLogCount;
+  configRef = { maxDepth, captureStackTraces };
+  writeCount = 0;
 }
 
 export function unbindLogger(): void {
   storageRef = null;
+  configRef = { maxDepth: 2, captureStackTraces: true };
+  maxLogCountRef = 0;
+  writeCount = 0;
 }
 
 function getStorage(): StorageAdapter {
@@ -57,10 +69,21 @@ function getStorage(): StorageAdapter {
 
 function persist(level: LogLevel, tag: string | undefined, message: string, args: unknown[]): void {
   const storage = getStorage();
-  const entry = buildLogEntry(level, message, args, tag);
-  storage.addEntry(entry).catch(() => {
-    // Persist failures should never break the app
-  });
+  const entry = buildLogEntry(level, message, args, configRef, tag);
+  storage
+    .addEntry(entry)
+    .then(() => {
+      writeCount++;
+      if (writeCount >= TRIM_CHECK_INTERVAL) {
+        writeCount = 0;
+        storage.trim(maxLogCountRef).catch(() => {
+          // Trim failures are non-critical
+        });
+      }
+    })
+    .catch(() => {
+      // Persist failures should never break the app
+    });
 }
 
 function createTaggedLogger(tag: string): TaggedLogger {
