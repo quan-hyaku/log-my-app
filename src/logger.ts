@@ -4,9 +4,11 @@ import { createStorage } from './storage.js';
 import { ConsoleInterceptor } from './interceptor.js';
 import { bindLogger, unbindLogger } from './custom-logger.js';
 import { installErrorHandlers, uninstallErrorHandlers } from './error-handler.js';
+import { WriteCounter } from './write-counter.js';
 
 let storage: StorageAdapter | null = null;
 let interceptor: ConsoleInterceptor | null = null;
+let writeCounter: WriteCounter | null = null;
 
 export async function initLogger(config?: LoggerConfig): Promise<void> {
   if (interceptor?.isInstalled()) {
@@ -19,9 +21,10 @@ export async function initLogger(config?: LoggerConfig): Promise<void> {
   const captureStackTraces = config?.captureStackTraces ?? true;
 
   storage = await createStorage(storageKey, maxLogCount);
-  interceptor = new ConsoleInterceptor(storage, maxLogCount, maxDepth, captureStackTraces);
+  writeCounter = new WriteCounter(storageKey);
+  interceptor = new ConsoleInterceptor(storage, maxLogCount, writeCounter, maxDepth, captureStackTraces);
   interceptor.install();
-  bindLogger(storage, maxLogCount, maxDepth, captureStackTraces);
+  bindLogger(storage, maxLogCount, writeCounter, maxDepth, captureStackTraces);
 
   if (config?.captureUncaughtErrors === true) {
     installErrorHandlers(storage, maxDepth, captureStackTraces);
@@ -31,6 +34,10 @@ export async function initLogger(config?: LoggerConfig): Promise<void> {
 export function destroyLogger(): void {
   uninstallErrorHandlers();
   unbindLogger();
+  if (writeCounter) {
+    writeCounter.persist();
+    writeCounter = null;
+  }
   if (interceptor) {
     interceptor.uninstall();
     interceptor = null;
@@ -58,6 +65,9 @@ export async function getLogsByTag(tag: string): Promise<LogEntry[]> {
 
 export async function clearLogs(): Promise<void> {
   ensureInitialized(storage);
+  if (writeCounter) {
+    writeCounter.reset();
+  }
   return storage.clear();
 }
 

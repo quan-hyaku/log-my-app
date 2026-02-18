@@ -1,6 +1,7 @@
 import type { LogEntry, LogLevel, StorageAdapter } from './types.js';
 import { TRIM_CHECK_INTERVAL } from './types.js';
 import { safeStringify } from './utils.js';
+import type { WriteCounter } from './write-counter.js';
 
 export interface TaggedLogger {
   log(message: string, ...args: unknown[]): void;
@@ -39,25 +40,26 @@ function buildLogEntry(
 let storageRef: StorageAdapter | null = null;
 let configRef: StringifyConfig = { maxDepth: 2, captureStackTraces: true };
 let maxLogCountRef = 0;
-let writeCount = 0;
+let counterRef: WriteCounter | null = null;
 
 export function bindLogger(
   storage: StorageAdapter,
   maxLogCount: number,
+  counter: WriteCounter,
   maxDepth: number = 2,
   captureStackTraces: boolean = true,
 ): void {
   storageRef = storage;
   maxLogCountRef = maxLogCount;
+  counterRef = counter;
   configRef = { maxDepth, captureStackTraces };
-  writeCount = 0;
 }
 
 export function unbindLogger(): void {
   storageRef = null;
   configRef = { maxDepth: 2, captureStackTraces: true };
   maxLogCountRef = 0;
-  writeCount = 0;
+  counterRef = null;
 }
 
 function getStorage(): StorageAdapter {
@@ -73,9 +75,10 @@ function persist(level: LogLevel, tag: string | undefined, message: string, args
   storage
     .addEntry(entry)
     .then(() => {
-      writeCount++;
-      if (writeCount >= TRIM_CHECK_INTERVAL) {
-        writeCount = 0;
+      if (!counterRef) return;
+      const count = counterRef.increment();
+      if (count >= TRIM_CHECK_INTERVAL) {
+        counterRef.reset();
         storage.trim(maxLogCountRef).catch(() => {
           // Trim failures are non-critical
         });

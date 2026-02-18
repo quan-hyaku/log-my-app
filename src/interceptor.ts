@@ -1,6 +1,7 @@
 import type { LogEntry, LogLevel, StorageAdapter } from './types.js';
 import { LOG_LEVELS, TRIM_CHECK_INTERVAL } from './types.js';
 import { safeStringify } from './utils.js';
+import type { WriteCounter } from './write-counter.js';
 
 type ConsoleMethod = (...args: unknown[]) => void;
 
@@ -59,17 +60,19 @@ export class ConsoleInterceptor {
   private maxLogCount: number;
   private maxDepth: number;
   private captureStackTraces: boolean;
-  private writeCount = 0;
+  private counter: WriteCounter;
   private installed = false;
 
   constructor(
     storage: StorageAdapter,
     maxLogCount: number,
+    counter: WriteCounter,
     maxDepth: number = 2,
     captureStackTraces: boolean = true,
   ) {
     this.storage = storage;
     this.maxLogCount = maxLogCount;
+    this.counter = counter;
     this.maxDepth = maxDepth;
     this.captureStackTraces = captureStackTraces;
   }
@@ -119,9 +122,9 @@ export class ConsoleInterceptor {
     this.storage
       .addEntry(entry)
       .then(() => {
-        this.writeCount++;
-        if (this.writeCount >= TRIM_CHECK_INTERVAL) {
-          this.writeCount = 0;
+        const count = this.counter.increment();
+        if (count >= TRIM_CHECK_INTERVAL) {
+          this.counter.reset();
           this.storage.trim(this.maxLogCount).catch(() => {
             // Trim failures are non-critical
           });

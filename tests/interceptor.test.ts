@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ConsoleInterceptor } from '../src/interceptor.js';
 import type { LogEntry, StorageAdapter } from '../src/types.js';
+import { WriteCounter } from '../src/write-counter.js';
 
 function createMockStorage(): StorageAdapter & {
   entries: LogEntry[];
@@ -55,8 +56,10 @@ describe('ConsoleInterceptor', () => {
     originalInfo = console.info;
     originalDebug = console.debug;
 
+    localStorage.removeItem('__test-interceptor_writeCount__');
     mockStorage = createMockStorage();
-    interceptor = new ConsoleInterceptor(mockStorage, 5000);
+    const counter = new WriteCounter('test-interceptor');
+    interceptor = new ConsoleInterceptor(mockStorage, 5000, counter);
   });
 
   afterEach(() => {
@@ -274,7 +277,8 @@ describe('ConsoleInterceptor', () => {
     failStorage.addEntry = async () => {
       throw new Error('Storage write failed');
     };
-    const inter = new ConsoleInterceptor(failStorage, 5000);
+    const failCounter = new WriteCounter('test-interceptor-fail');
+    const inter = new ConsoleInterceptor(failStorage, 5000, failCounter);
     inter.install();
 
     // Should not throw
@@ -328,7 +332,8 @@ describe('ConsoleInterceptor - captureStackTraces config', () => {
   });
 
   it('should omit stack traces from Error args when captureStackTraces is false', async () => {
-    const interceptor = new ConsoleInterceptor(mockStorage, 5000, 2, false);
+    const counter = new WriteCounter('test-interceptor-stack');
+    const interceptor = new ConsoleInterceptor(mockStorage, 5000, counter, 2, false);
     interceptor.install();
 
     const err = new Error('test error');
@@ -350,7 +355,8 @@ describe('ConsoleInterceptor - captureStackTraces config', () => {
   });
 
   it('should include stack traces in Error args by default (captureStackTraces=true)', async () => {
-    const interceptor = new ConsoleInterceptor(mockStorage, 5000, 2, true);
+    const counter = new WriteCounter('test-interceptor-stack');
+    const interceptor = new ConsoleInterceptor(mockStorage, 5000, counter, 2, true);
     interceptor.install();
 
     const err = new Error('with stack');

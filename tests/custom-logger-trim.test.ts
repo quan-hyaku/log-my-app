@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { bindLogger, unbindLogger, Logger } from '../src/custom-logger.js';
 import { TRIM_CHECK_INTERVAL } from '../src/types.js';
 import type { LogEntry, StorageAdapter } from '../src/types.js';
+import { WriteCounter } from '../src/write-counter.js';
 
 function createMockStorage(): StorageAdapter & {
   entries: LogEntry[];
@@ -41,15 +42,20 @@ function createMockStorage(): StorageAdapter & {
 
 describe('Custom Logger - trim on persist', () => {
   let mockStorage: ReturnType<typeof createMockStorage>;
+  let counter: WriteCounter;
   const MAX_LOG_COUNT = 500;
+  const TEST_STORAGE_KEY = 'test-custom-logger-trim';
 
   beforeEach(() => {
+    localStorage.removeItem(`__${TEST_STORAGE_KEY}_writeCount__`);
     mockStorage = createMockStorage();
-    bindLogger(mockStorage, MAX_LOG_COUNT);
+    counter = new WriteCounter(TEST_STORAGE_KEY);
+    bindLogger(mockStorage, MAX_LOG_COUNT, counter);
   });
 
   afterEach(() => {
     unbindLogger();
+    localStorage.removeItem(`__${TEST_STORAGE_KEY}_writeCount__`);
   });
 
   it('should trigger trim after TRIM_CHECK_INTERVAL writes via Logger.info()', async () => {
@@ -141,10 +147,12 @@ describe('Custom Logger - trim on persist', () => {
 
     expect(mockStorage.trimCalls).toHaveLength(0);
 
-    // Unbind and rebind resets writeCount to 0
+    // Unbind and rebind with a fresh counter resets writeCount to 0
     unbindLogger();
+    localStorage.removeItem(`__${TEST_STORAGE_KEY}_writeCount__`);
     const freshStorage = createMockStorage();
-    bindLogger(freshStorage, MAX_LOG_COUNT);
+    const freshCounter = new WriteCounter(TEST_STORAGE_KEY);
+    bindLogger(freshStorage, MAX_LOG_COUNT, freshCounter);
 
     // A single write should NOT trigger trim (counter was reset)
     Logger.info('after-rebind');
@@ -158,7 +166,8 @@ describe('Custom Logger - trim on persist', () => {
     // Clean up
     unbindLogger();
     // Re-bind original for afterEach unbindLogger
-    bindLogger(mockStorage, MAX_LOG_COUNT);
+    counter = new WriteCounter(TEST_STORAGE_KEY);
+    bindLogger(mockStorage, MAX_LOG_COUNT, counter);
   });
 
   it('should not break when storage.trim rejects', async () => {
