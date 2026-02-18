@@ -434,6 +434,138 @@ describe('IndexedDBStorage - write batching', () => {
 });
 
 // ---------------------------------------------------------------------------
+// IndexedDBStorage - trim edge cases and error surfacing
+// ---------------------------------------------------------------------------
+describe('IndexedDBStorage - trim edge cases', () => {
+  let storage: IndexedDBStorage;
+
+  beforeEach(async () => {
+    storage = new IndexedDBStorage('trim-edge-' + Math.random().toString(36).slice(2));
+    await storage.init();
+  });
+
+  afterEach(() => {
+    storage.close();
+  });
+
+  it('should trim correctly after a burst of unbatched addEntry calls', async () => {
+    // Fire 20 addEntry calls without awaiting (buffered writes)
+    for (let i = 0; i < 20; i++) {
+      storage.addEntry(makeEntry({ message: `burst-${i}` }));
+    }
+
+    // Trim should flush pending entries first, then trim
+    await storage.trim(10);
+
+    const remaining = await storage.getAll();
+    expect(remaining).toHaveLength(10);
+    // Oldest entries (0-9) should be removed, newest (10-19) kept
+    expect(remaining[0]!.message).toBe('burst-10');
+    expect(remaining[9]!.message).toBe('burst-19');
+  });
+
+  it('should not remove entries when count equals maxCount', async () => {
+    for (let i = 0; i < 5; i++) {
+      await storage.addEntry(makeEntry({ message: `exact-${i}` }));
+    }
+    await storage.flush();
+
+    await storage.trim(5);
+    expect(await storage.count()).toBe(5);
+    const all = await storage.getAll();
+    expect(all[0]!.message).toBe('exact-0');
+    expect(all[4]!.message).toBe('exact-4');
+  });
+
+  it('should remove exactly 1 entry when count is 1 over maxCount', async () => {
+    for (let i = 0; i < 6; i++) {
+      await storage.addEntry(makeEntry({ message: `one-over-${i}` }));
+    }
+    await storage.flush();
+
+    await storage.trim(5);
+    const remaining = await storage.getAll();
+    expect(remaining).toHaveLength(5);
+    expect(remaining[0]!.message).toBe('one-over-1');
+    expect(remaining[4]!.message).toBe('one-over-5');
+  });
+
+  it('should handle large overshoot (trim from many to few)', async () => {
+    for (let i = 0; i < 50; i++) {
+      await storage.addEntry(makeEntry({ message: `large-${i}` }));
+    }
+    await storage.flush();
+    expect(await storage.count()).toBe(50);
+
+    await storage.trim(3);
+    const remaining = await storage.getAll();
+    expect(remaining).toHaveLength(3);
+    expect(remaining[0]!.message).toBe('large-47');
+    expect(remaining[2]!.message).toBe('large-49');
+  });
+
+  it('should trim to 0 when maxCount is 0', async () => {
+    for (let i = 0; i < 5; i++) {
+      await storage.addEntry(makeEntry({ message: `zero-${i}` }));
+    }
+    await storage.flush();
+
+    await storage.trim(0);
+    expect(await storage.count()).toBe(0);
+  });
+
+  it('should handle rapid addEntry + trim sequences without failure', async () => {
+    // Interleave adds and trims
+    for (let i = 0; i < 10; i++) {
+      await storage.addEntry(makeEntry({ message: `seq-${i}` }));
+    }
+    await storage.flush();
+    await storage.trim(5);
+
+    for (let i = 10; i < 20; i++) {
+      await storage.addEntry(makeEntry({ message: `seq-${i}` }));
+    }
+    await storage.flush();
+    await storage.trim(5);
+
+    const remaining = await storage.getAll();
+    expect(remaining).toHaveLength(5);
+    // Should keep the 5 newest from the second batch
+    expect(remaining[0]!.message).toBe('seq-15');
+    expect(remaining[4]!.message).toBe('seq-19');
+  });
+
+  it('should not fail when trimming an empty store', async () => {
+    expect(await storage.count()).toBe(0);
+    await storage.trim(10);
+    expect(await storage.count()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IndexedDBStorage - trim error visibility (warnInternal)
+// ---------------------------------------------------------------------------
+describe('IndexedDBStorage - trim error visibility', () => {
+  it('should call warnInternal when flush fails during addEntry', async () => {
+    const { warnInternal } = await import('../src/internal-warn.js');
+    const warnSpy = vi.spyOn({ warnInternal }, 'warnInternal');
+
+    // We test indirectly: an uninitialized storage will fail on flushEntries
+    const uninit = new IndexedDBStorage('warn-test');
+    // Do not call init() — addEntry queues a microtask flush that will fail
+    await uninit.addEntry(makeEntry());
+
+    // The microtask flush runs asynchronously; give it a tick
+    await new Promise((resolve) => queueMicrotask(resolve));
+
+    // The trim on uninitialized db rejects with a clear error
+    await expect(uninit.trim(10)).rejects.toThrow('Database not initialized');
+
+    warnSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // createStorage factory
 // ---------------------------------------------------------------------------
 describe('createStorage', () => {

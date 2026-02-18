@@ -1,6 +1,7 @@
 import type { LogEntry, LogLevel, StorageAdapter } from './types.js';
 import { TRIM_CHECK_INTERVAL } from './types.js';
 import { safeStringify } from './utils.js';
+import { warnInternal } from './internal-warn.js';
 import type { WriteCounter } from './write-counter.js';
 
 export interface TaggedLogger {
@@ -79,13 +80,13 @@ function persist(level: LogLevel, tag: string | undefined, message: string, args
       const count = counterRef.increment();
       if (count >= TRIM_CHECK_INTERVAL) {
         counterRef.reset();
-        storage.trim(maxLogCountRef).catch(() => {
-          // Trim failures are non-critical
+        storage.trim(maxLogCountRef).catch((err: unknown) => {
+          warnInternal('[log-my-app] trim failed:', err);
         });
       }
     })
-    .catch(() => {
-      // Persist failures should never break the app
+    .catch((err: unknown) => {
+      warnInternal('[log-my-app] persist failed:', err);
     });
 }
 

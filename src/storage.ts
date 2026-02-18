@@ -1,5 +1,6 @@
 import type { LogEntry, LogLevel, StorageAdapter } from './types.js';
 import { LOCALSTORAGE_MAX_LOG_COUNT } from './types.js';
+import { warnInternal } from './internal-warn.js';
 
 const STORE_NAME = 'logs';
 const DB_VERSION = 2;
@@ -64,8 +65,8 @@ export class IndexedDBStorage implements StorageAdapter {
     if (!this.flushScheduled) {
       this.flushScheduled = true;
       queueMicrotask(() => {
-        this.flushEntries().catch(() => {
-          // Flush failures are non-critical
+        this.flushEntries().catch((err: unknown) => {
+          warnInternal('[log-my-app] flush failed:', err);
         });
       });
     }
@@ -169,7 +170,10 @@ export class IndexedDBStorage implements StorageAdapter {
     });
   }
 
-  trim(maxCount: number): Promise<void> {
+  async trim(maxCount: number): Promise<void> {
+    // Drain any buffered entries so the count reflects reality
+    await this.flushEntries();
+
     return new Promise((resolve, reject) => {
       if (!this.db) {
         reject(new Error('Database not initialized'));
@@ -183,8 +187,7 @@ export class IndexedDBStorage implements StorageAdapter {
       countReq.onsuccess = () => {
         const total = countReq.result;
         if (total <= maxCount) {
-          resolve();
-          return;
+          return; // Let tx.oncomplete resolve the promise
         }
 
         // Range-based trim: find the key of the (deleteCount)th entry,
@@ -206,7 +209,11 @@ export class IndexedDBStorage implements StorageAdapter {
             cursor.continue();
           }
         };
+
+        cursorReq.onerror = () => reject(cursorReq.error);
       };
+
+      countReq.onerror = () => reject(countReq.error);
 
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);

@@ -1,6 +1,7 @@
 import type { LogEntry, LogLevel, StorageAdapter } from './types.js';
 import { LOG_LEVELS, TRIM_CHECK_INTERVAL } from './types.js';
 import { safeStringify } from './utils.js';
+import { warnInternal } from './internal-warn.js';
 import type { WriteCounter } from './write-counter.js';
 
 type ConsoleMethod = (...args: unknown[]) => void;
@@ -125,13 +126,13 @@ export class ConsoleInterceptor {
         const count = this.counter.increment();
         if (count >= TRIM_CHECK_INTERVAL) {
           this.counter.reset();
-          this.storage.trim(this.maxLogCount).catch(() => {
-            // Trim failures are non-critical
+          this.storage.trim(this.maxLogCount).catch((err: unknown) => {
+            warnInternal('[log-my-app] trim failed:', err);
           });
         }
       })
-      .catch(() => {
-        // Persist failures should never break the app
+      .catch((err: unknown) => {
+        warnInternal('[log-my-app] persist failed:', err);
       });
   }
 }
