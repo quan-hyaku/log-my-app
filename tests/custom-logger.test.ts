@@ -6,6 +6,7 @@ import {
   getLogsByTag,
 } from '../src/logger.js';
 import { Logger } from '../src/custom-logger.js';
+import { nativeMethods } from '../src/interceptor.js';
 
 describe('Custom Logger API', () => {
   beforeEach(async () => {
@@ -172,53 +173,80 @@ describe('Custom Logger API', () => {
     });
   });
 
-  describe('Logger does NOT output to console', () => {
-    it('should not call console.log when using Logger.log()', async () => {
-      const spy = vi.spyOn(console, 'log');
-      const callsBefore = spy.mock.calls.length;
-
-      Logger.log('silent message');
-
-      // Logger should not have called console.log
-      // (console.log may have been called by vitest internals, so we check
-      // that our specific message was NOT passed to console.log)
-      const newCalls = spy.mock.calls.slice(callsBefore);
-      const found = newCalls.some((args) =>
-        args.some((a) => typeof a === 'string' && a.includes('silent message')),
-      );
-      expect(found).toBe(false);
-
-      spy.mockRestore();
+  describe('Logger outputs to console via nativeMethods', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
     });
 
-    it('should not call console.info when using Logger.info()', async () => {
-      const spy = vi.spyOn(console, 'info');
-      const callsBefore = spy.mock.calls.length;
-
-      Logger.info('silent info');
-
-      const newCalls = spy.mock.calls.slice(callsBefore);
-      const found = newCalls.some((args) =>
-        args.some((a) => typeof a === 'string' && a.includes('silent info')),
-      );
-      expect(found).toBe(false);
-
-      spy.mockRestore();
+    it('should call nativeMethods.log when using Logger.log()', () => {
+      const spy = vi.spyOn(nativeMethods, 'log').mockImplementation(() => {});
+      Logger.log('hello');
+      expect(spy).toHaveBeenCalledWith('hello');
     });
 
-    it('should not call console methods when using Logger.tag().warn()', async () => {
-      const spy = vi.spyOn(console, 'warn');
-      const callsBefore = spy.mock.calls.length;
+    it('should call nativeMethods.info when using Logger.info()', () => {
+      const spy = vi.spyOn(nativeMethods, 'info').mockImplementation(() => {});
+      Logger.info('info msg');
+      expect(spy).toHaveBeenCalledWith('info msg');
+    });
 
-      Logger.tag('test').warn('silent tagged warn');
+    it('should call nativeMethods.warn when using Logger.warn()', () => {
+      const spy = vi.spyOn(nativeMethods, 'warn').mockImplementation(() => {});
+      Logger.warn('warn msg');
+      expect(spy).toHaveBeenCalledWith('warn msg');
+    });
 
-      const newCalls = spy.mock.calls.slice(callsBefore);
-      const found = newCalls.some((args) =>
-        args.some((a) => typeof a === 'string' && a.includes('silent tagged warn')),
-      );
-      expect(found).toBe(false);
+    it('should call nativeMethods.error when using Logger.error()', () => {
+      const spy = vi.spyOn(nativeMethods, 'error').mockImplementation(() => {});
+      Logger.error('error msg');
+      expect(spy).toHaveBeenCalledWith('error msg');
+    });
 
-      spy.mockRestore();
+    it('should call nativeMethods.debug when using Logger.debug()', () => {
+      const spy = vi.spyOn(nativeMethods, 'debug').mockImplementation(() => {});
+      Logger.debug('debug msg');
+      expect(spy).toHaveBeenCalledWith('debug msg');
+    });
+
+    it('should pass extra arguments to the native console method', () => {
+      const spy = vi.spyOn(nativeMethods, 'log').mockImplementation(() => {});
+      Logger.log('msg', 42, { key: 'val' });
+      expect(spy).toHaveBeenCalledWith('msg', 42, { key: 'val' });
+    });
+
+    it('should prefix tagged logger output with [tag]', () => {
+      const spy = vi.spyOn(nativeMethods, 'error').mockImplementation(() => {});
+      Logger.tag('MyTag').error('oops');
+      expect(spy).toHaveBeenCalledWith('[MyTag]', 'oops');
+    });
+
+    it('should prefix tagged logger output with [tag] and pass extra args', () => {
+      const spy = vi.spyOn(nativeMethods, 'warn').mockImplementation(() => {});
+      Logger.tag('Network').warn('timeout', { url: '/api' });
+      expect(spy).toHaveBeenCalledWith('[Network]', 'timeout', { url: '/api' });
+    });
+
+    it('should call the correct native method for each level via tagged logger', () => {
+      const spies = {
+        log: vi.spyOn(nativeMethods, 'log').mockImplementation(() => {}),
+        info: vi.spyOn(nativeMethods, 'info').mockImplementation(() => {}),
+        warn: vi.spyOn(nativeMethods, 'warn').mockImplementation(() => {}),
+        error: vi.spyOn(nativeMethods, 'error').mockImplementation(() => {}),
+        debug: vi.spyOn(nativeMethods, 'debug').mockImplementation(() => {}),
+      };
+
+      const tagged = Logger.tag('T');
+      tagged.log('l');
+      tagged.info('i');
+      tagged.warn('w');
+      tagged.error('e');
+      tagged.debug('d');
+
+      expect(spies.log).toHaveBeenCalledWith('[T]', 'l');
+      expect(spies.info).toHaveBeenCalledWith('[T]', 'i');
+      expect(spies.warn).toHaveBeenCalledWith('[T]', 'w');
+      expect(spies.error).toHaveBeenCalledWith('[T]', 'e');
+      expect(spies.debug).toHaveBeenCalledWith('[T]', 'd');
     });
   });
 });

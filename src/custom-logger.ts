@@ -3,6 +3,7 @@ import { TRIM_CHECK_INTERVAL } from './types.js';
 import { safeStringify } from './utils.js';
 import { warnInternal } from './internal-warn.js';
 import type { WriteCounter } from './write-counter.js';
+import { nativeMethods } from './interceptor.js';
 
 export interface TaggedLogger {
   log(message: string, ...args: unknown[]): void;
@@ -71,6 +72,10 @@ function getStorage(): StorageAdapter {
 }
 
 function persist(level: LogLevel, tag: string | undefined, message: string, args: unknown[]): void {
+  const prefix = tag ? `[${tag}]` : undefined;
+  const consoleArgs = prefix ? [prefix, message, ...args] : [message, ...args];
+  nativeMethods[level](...consoleArgs);
+
   const storage = getStorage();
   const entry = buildLogEntry(level, message, args, configRef, tag);
   storage

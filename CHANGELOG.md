@@ -38,3 +38,30 @@ Zero-dependency browser logging library.
 ### Bug Fixes
 
 - **Error serialization** — `Error` objects now correctly serialize with `name`, `message`, and `stack` instead of producing empty `"{}"`
+
+## v0.1.3 — Logger.tag() Trim Fix
+
+### Bug Fixes
+
+- **Logger.tag() now triggers trimming** — `Logger.tag().info()` and other custom logger methods were missing write counting and trim logic, causing unbounded log growth when using the custom Logger API. Added `writeCount` tracking with `TRIM_CHECK_INTERVAL` to match the console interceptor's trim behavior.
+
+## v0.1.4 — Persistent Write Counter
+
+### Bug Fixes
+
+- **Write counter persists across page refreshes** — `writeCount` previously reset to 0 on every browser refresh, meaning short sessions (< 100 writes) never triggered trimming. Introduced a shared `WriteCounter` class that persists the counter to localStorage, so cumulative writes across sessions are tracked correctly.
+- **Shared counter** — Both the console interceptor and `Logger.tag()` paths now share a single `WriteCounter` instance for accurate tracking.
+- **Counter auto-persists** every 20 increments and on reset, minimizing localStorage writes while limiting worst-case loss to 19 writes on a crash.
+- **`clearLogs()` resets the counter** — Clearing logs now properly resets the write counter to 0.
+
+## v0.1.5 — Trim Reliability and Error Visibility
+
+### Bug Fixes
+
+- **Fixed race condition in IndexedDB trim** — `trim()` now flushes pending buffered entries before counting, ensuring the IDB count reflects reality. Previously, trim could see a stale count and skip deletion.
+- **Added missing IDB error handlers** — `countReq.onerror` and `cursorReq.onerror` in `trim()` now properly reject the promise instead of leaving it hanging.
+- **Fixed double-resolve** in trim when entry count was already within limits.
+
+### Improvements
+
+- **Error visibility** — Replaced all silent `.catch(() => {})` blocks with internal warnings via a pristine `console.warn` reference. Trim, persist, and flush failures are now surfaced in the console without creating feedback loops with the interceptor.

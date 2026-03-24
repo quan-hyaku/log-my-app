@@ -27,7 +27,7 @@ const nativeInfo: ConsoleMethod =
 const nativeDebug: ConsoleMethod =
   typeof console !== 'undefined' ? console.debug.bind(console) : () => {};
 
-const nativeMethods: Readonly<OriginalMethods> = {
+export const nativeMethods: Readonly<OriginalMethods> = {
   log: nativeLog,
   warn: nativeWarn,
   error: nativeError,
